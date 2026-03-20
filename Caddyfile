@@ -1,0 +1,16 @@
+{
+	auto_https off
+}
+
+https://johnson-minipc.mermaid-snake.ts.net:8443 {
+	tls ts.crt ts.key
+
+	header Cross-Origin-Opener-Policy "same-origin"
+	header Cross-Origin-Embedder-Policy "require-corp"
+
+	reverse_proxy localhost:8080 {
+		header_down -Cross-Origin-Opener-Policy
+		header_down -Cross-Origin-Embedder-Policy
+		header_down -Cross-Origin-Resource-Policy
+	}
+}

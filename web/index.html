@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>enclose.horse solver</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    h1 { font-size: 1.6rem; color: #e94560; margin-bottom: 0.3rem; }
+    .subtitle { font-size: 0.85rem; color: #666; margin-bottom: 2rem; }
+
+    .controls {
+      display: flex; gap: 0.75rem; align-items: center;
+      margin-bottom: 1.5rem; flex-wrap: wrap; justify-content: center;
+    }
+
+    input[type="text"] {
+      font-family: inherit; font-size: 0.95rem;
+      padding: 0.5rem 0.75rem; border: 1px solid #333; border-radius: 4px;
+      background: #16213e; color: #e0e0e0; width: 280px; outline: none;
+    }
+    input[type="text"]:focus { border-color: #e94560; }
+
+    button {
+      font-family: inherit; font-size: 0.95rem;
+      padding: 0.5rem 1.5rem; border: none; border-radius: 4px;
+      background: #e94560; color: #fff; cursor: pointer;
+    }
+    button:hover:not(:disabled) { background: #c73652; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    #status {
+      font-size: 0.85rem; color: #aaa; margin-bottom: 1rem;
+      min-height: 1.2em; text-align: center;
+    }
+    #status.error { color: #e94560; }
+
+    #results { display: none; width: 100%; max-width: 700px; margin-bottom: 1.5rem; }
+
+    .result-summary {
+      background: #16213e; border: 1px solid #333; border-radius: 6px;
+      padding: 1rem 1.25rem; margin-bottom: 1rem;
+    }
+    .result-summary h2 { font-size: 1.1rem; color: #e94560; margin-bottom: 0.75rem; }
+    .result-row { display: flex; justify-content: space-between; padding: 0.25rem 0; font-size: 0.9rem; }
+    .result-label { color: #888; }
+    .result-value { color: #e0e0e0; font-weight: bold; }
+    .result-value.optimal { color: #4ecca3; }
+    .walls-list { font-size: 0.8rem; color: #888; margin-top: 0.5rem; word-break: break-all; }
+
+    #canvas-wrap {
+      background: #0f0f23; border: 1px solid #333; border-radius: 6px;
+      padding: 12px; display: flex; justify-content: center; overflow-x: auto;
+    }
+    canvas {
+      image-rendering: pixelated; image-rendering: crisp-edges;
+    }
+
+    .legend {
+      display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center;
+      margin-top: 0.75rem; font-size: 0.75rem; color: #888;
+    }
+    .legend-item { display: flex; align-items: center; gap: 4px; }
+    .legend-swatch { width: 12px; height: 12px; border-radius: 2px; border: 1px solid #555; }
+
+    .build-note {
+      margin-top: 2rem; font-size: 0.75rem; color: #444; text-align: center; max-width: 500px;
+    }
+    .build-note code { background: #16213e; padding: 0.15rem 0.4rem; border-radius: 3px; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>enclose.horse solver</h1>
+  <p class="subtitle">find optimal wall placements</p>
+  <p class="subtitle" id="mode-badge" style="display:none"></p>
+
+  <div class="controls">
+    <input type="text" id="input" placeholder="YYYY-MM-DD or puzzle URL">
+    <button id="solve-btn">Solve</button>
+  </div>
+
+  <div id="status"></div>
+
+  <div id="results">
+    <div class="result-summary">
+      <h2>Results</h2>
+      <div class="result-row">
+        <span class="result-label">Puzzle</span>
+        <span class="result-value" id="res-name"></span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">Score</span>
+        <span class="result-value" id="res-score"></span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">Optimal</span>
+        <span class="result-value optimal" id="res-optimal"></span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">Budget</span>
+        <span class="result-value" id="res-budget"></span>
+      </div>
+      <div class="walls-list" id="res-walls"></div>
+    </div>
+    <div id="canvas-wrap"><canvas id="grid-canvas"></canvas></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-swatch" style="background:#3b8c5e"></div>Grass</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#2d6ea0"></div>Water</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#c0392b"></div>Wall</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#f5f5dc"></div>Horse</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e74c8c"></div>Cherry</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#f1c40f"></div>Apple</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#e67e22"></div>Bee</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#9b59b6"></div>Portal</div>
+    </div>
+  </div>
+
+  <p class="build-note">
+    Build WASM: <code>./build-wasm.sh</code>
+  </p>
+
+  <script type="module">
+    import init, { initThreadPool, solve_puzzle } from "./pkg/enclose_horse_solver.js";
+
+    let wasmReady = false;
+    let wasmError = null;
+    let threaded = false;
+    try {
+      await init();
+      wasmReady = true;
+      if (typeof SharedArrayBuffer !== "undefined" && crossOriginIsolated) {
+        try {
+          await initThreadPool(navigator.hardwareConcurrency);
+          threaded = true;
+        } catch (e) {
+          console.warn("Thread pool init failed, running single-threaded:", e);
+        }
+      } else {
+        console.warn("SharedArrayBuffer not available (crossOriginIsolated:", crossOriginIsolated, ") — running single-threaded");
+      }
+    } catch (e) {
+      wasmError = e;
+      console.error("WASM init failed:", e);
+    }
+
+    // Show mode badge
+    const badge = document.getElementById("mode-badge");
+    if (wasmReady) {
+      badge.textContent = threaded ? `simd128 · ${navigator.hardwareConcurrency} threads` : "simd128 · single-threaded";
+      badge.style.color = threaded ? "#4ecca3" : "#e67e22";
+    } else {
+      badge.textContent = "wasm failed to load";
+      badge.style.color = "#e94560";
+    }
+    badge.style.display = "";
+
+    const TILE = 28;   // pixels per tile
+    const GAP = 1;     // grid line width
+
+    // Color palette matching enclose.horse pixel art style
+    const COLORS = {
+      grass:     ["#2d7a4a", "#3b8c5e", "#349553", "#2e8550"], // varied greens
+      water:     ["#1a5276", "#2d6ea0", "#24608a", "#1f5580"], // varied blues
+      waterFoam: "#4a90c2",
+      wall:      "#c0392b",
+      wallTop:   "#e74c3c",
+      wallShade: "#922b21",
+      horse:     "#f5f5dc",
+      horseMane: "#8b4513",
+      horseEye:  "#333",
+      cherry:    "#e74c8c",
+      cherryStem:"#2d5016",
+      apple:     "#f1c40f",
+      appleStar: "#fff",
+      bee:       "#e67e22",
+      beeStripe: "#333",
+      portal:    "#9b59b6",
+      portalGlow:"#c39bd3",
+      gridLine:  "#1a3a2a",
+      enclosed:  "rgba(76, 175, 80, 0.15)",
+    };
+
+    function drawTile(ctx, x, y, ch, isWall, isEnclosed) {
+      const s = TILE;
+      // Background
+      if (isEnclosed && ch !== "~") {
+        ctx.fillStyle = COLORS.enclosed;
+        ctx.fillRect(x, y, s, s);
+      }
+
+      if (isWall) {
+        drawWall(ctx, x, y, s);
+      } else if (ch === "~") {
+        drawWater(ctx, x, y, s);
+      } else if (ch === "H") {
+        drawGrass(ctx, x, y, s);
+        drawHorse(ctx, x, y, s);
+      } else if (ch === "C") {
+        drawGrass(ctx, x, y, s);
+        drawCherry(ctx, x, y, s);
+      } else if (ch === "A") {
+        drawGrass(ctx, x, y, s);
+        drawApple(ctx, x, y, s);
+      } else if (ch === "B") {
+        drawGrass(ctx, x, y, s);
+        drawBee(ctx, x, y, s);
+      } else if (ch === "P") {
+        drawGrass(ctx, x, y, s);
+        drawPortal(ctx, x, y, s);
+      } else if (ch === "L") {
+        drawGrass(ctx, x, y, s);
+        drawLovebird(ctx, x, y, s);
+      } else {
+        drawGrass(ctx, x, y, s);
+      }
+    }
+
+    function drawGrass(ctx, x, y, s) {
+      // Base green with subtle pixel variation
+      ctx.fillStyle = COLORS.grass[1];
+      ctx.fillRect(x, y, s, s);
+      // Random-ish texture dots
+      const hash = (x * 7 + y * 13) & 0xFFFF;
+      ctx.fillStyle = COLORS.grass[hash % 4];
+      const p = 2;
+      for (let i = 0; i < 4; i++) {
+        const dx = ((hash >> (i * 3)) % (s - p));
+        const dy = ((hash >> (i * 3 + 1)) % (s - p));
+        ctx.fillRect(x + dx, y + dy, p, p);
+      }
+      // Tiny grass blades
+      ctx.fillStyle = "#4aad6a";
+      if (hash % 3 === 0) {
+        ctx.fillRect(x + s * 0.3, y + s * 0.6, 1, 3);
+        ctx.fillRect(x + s * 0.7, y + s * 0.5, 1, 4);
+      }
+    }
+
+    function drawWater(ctx, x, y, s) {
+      const hash = (x * 11 + y * 17) & 0xFFFF;
+      ctx.fillStyle = COLORS.water[hash % 4];
+      ctx.fillRect(x, y, s, s);
+      // Wave highlights
+      ctx.fillStyle = COLORS.waterFoam;
+      const wx = (hash % (s - 6)) + 2;
+      ctx.fillRect(x + wx, y + s * 0.3, 4, 1);
+      ctx.fillRect(x + ((wx + 7) % (s - 4)), y + s * 0.65, 3, 1);
+    }
+
+    function drawWall(ctx, x, y, s) {
+      // Stone/brick wall with 3D shading
+      ctx.fillStyle = COLORS.wallShade;
+      ctx.fillRect(x, y, s, s);
+      ctx.fillStyle = COLORS.wall;
+      ctx.fillRect(x, y, s, s - 3);
+      ctx.fillStyle = COLORS.wallTop;
+      ctx.fillRect(x + 1, y + 1, s - 2, s - 5);
+      // Brick pattern
+      ctx.fillStyle = COLORS.wallShade;
+      ctx.fillRect(x, y + Math.floor(s * 0.35), s, 1);
+      ctx.fillRect(x, y + Math.floor(s * 0.65), s, 1);
+      ctx.fillRect(x + Math.floor(s * 0.5), y, 1, Math.floor(s * 0.35));
+      ctx.fillRect(x + Math.floor(s * 0.25), y + Math.floor(s * 0.35), 1, Math.floor(s * 0.3));
+      ctx.fillRect(x + Math.floor(s * 0.75), y + Math.floor(s * 0.35), 1, Math.floor(s * 0.3));
+      ctx.fillRect(x + Math.floor(s * 0.5), y + Math.floor(s * 0.65), 1, s - Math.floor(s * 0.65) - 3);
+    }
+
+    function drawHorse(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      const u = s / 16; // unit for pixel art
+      // Body
+      ctx.fillStyle = COLORS.horse;
+      ctx.fillRect(cx - 4*u, cy - 2*u, 8*u, 5*u);
+      // Head
+      ctx.fillRect(cx + 3*u, cy - 5*u, 4*u, 4*u);
+      // Neck
+      ctx.fillRect(cx + 2*u, cy - 3*u, 3*u, 2*u);
+      // Legs
+      ctx.fillRect(cx - 3*u, cy + 3*u, 2*u, 3*u);
+      ctx.fillRect(cx + 2*u, cy + 3*u, 2*u, 3*u);
+      // Mane
+      ctx.fillStyle = COLORS.horseMane;
+      ctx.fillRect(cx + 2*u, cy - 5*u, 1*u, 5*u);
+      // Tail
+      ctx.fillRect(cx - 5*u, cy - 2*u, 2*u, 2*u);
+      ctx.fillRect(cx - 6*u, cy - 1*u, 2*u, 2*u);
+      // Eye
+      ctx.fillStyle = COLORS.horseEye;
+      ctx.fillRect(cx + 5*u, cy - 4*u, u, u);
+      // Ear
+      ctx.fillStyle = COLORS.horse;
+      ctx.fillRect(cx + 4*u, cy - 6*u, u, u);
+    }
+
+    function drawCherry(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      const r = s * 0.18;
+      // Stem
+      ctx.fillStyle = COLORS.cherryStem;
+      ctx.fillRect(cx - 1, cy - s * 0.3, 2, s * 0.2);
+      // Two cherries
+      ctx.fillStyle = COLORS.cherry;
+      ctx.beginPath();
+      ctx.arc(cx - r * 0.8, cy + r * 0.3, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx + r * 0.8, cy + r * 0.3, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Highlight
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(cx - r * 0.8 - 1, cy + r * 0.3 - r * 0.5, 2, 2);
+    }
+
+    function drawApple(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2 + 1;
+      const r = s * 0.25;
+      ctx.fillStyle = COLORS.apple;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Stem
+      ctx.fillStyle = "#5d4e37";
+      ctx.fillRect(cx - 1, cy - r - 2, 2, 3);
+      // Star sparkle
+      ctx.fillStyle = COLORS.appleStar;
+      ctx.fillRect(cx - 1, cy - 1, 2, 2);
+    }
+
+    function drawBee(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      const u = s / 14;
+      // Body
+      ctx.fillStyle = COLORS.bee;
+      ctx.fillRect(cx - 3*u, cy - 2*u, 6*u, 4*u);
+      // Stripes
+      ctx.fillStyle = COLORS.beeStripe;
+      ctx.fillRect(cx - 1*u, cy - 2*u, u, 4*u);
+      ctx.fillRect(cx + 2*u, cy - 2*u, u, 4*u);
+      // Wings
+      ctx.fillStyle = "rgba(200,220,255,0.6)";
+      ctx.fillRect(cx - 2*u, cy - 4*u, 3*u, 2*u);
+      ctx.fillRect(cx + 0*u, cy - 4*u, 3*u, 2*u);
+      // Eye
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(cx + 3*u, cy - u, u, u);
+    }
+
+    function drawPortal(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      // Outer glow
+      ctx.fillStyle = COLORS.portalGlow;
+      ctx.beginPath();
+      ctx.arc(cx, cy, s * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      // Inner
+      ctx.fillStyle = COLORS.portal;
+      ctx.beginPath();
+      ctx.arc(cx, cy, s * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+      // Center
+      ctx.fillStyle = "#2c1354";
+      ctx.beginPath();
+      ctx.arc(cx, cy, s * 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawLovebird(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      const u = s / 14;
+      // Pink bird body
+      ctx.fillStyle = "#e07090";
+      ctx.fillRect(cx - 3*u, cy - u, 5*u, 3*u);
+      // Head
+      ctx.fillRect(cx + 1*u, cy - 3*u, 3*u, 3*u);
+      // Eye
+      ctx.fillStyle = "#333";
+      ctx.fillRect(cx + 3*u, cy - 2*u, u, u);
+      // Wing
+      ctx.fillStyle = "#c0506e";
+      ctx.fillRect(cx - 2*u, cy, 3*u, 2*u);
+      // Heart
+      ctx.fillStyle = "#e94560";
+      ctx.fillRect(cx - 5*u, cy - 3*u, 2*u, 2*u);
+      ctx.fillRect(cx - 3*u, cy - 3*u, 2*u, 2*u);
+      ctx.fillRect(cx - 4*u, cy - 1*u, 2*u, u);
+    }
+
+    function renderCanvas(puzzleData, solution) {
+      const raw = puzzleData.map;
+      if (!raw) return;
+
+      const rows = typeof raw === "string" ? raw.split("\n") : raw;
+      const numRows = rows.length;
+      const numCols = rows[0].length;
+      const wallSet = new Set(solution.walls.map(([r, c]) => `${r},${c}`));
+
+      const canvas = document.getElementById("grid-canvas");
+      const w = numCols * (TILE + GAP) + GAP;
+      const h = numRows * (TILE + GAP) + GAP;
+
+      // Render at 2x for sharpness, CSS scales down
+      canvas.width = w * 2;
+      canvas.height = h * 2;
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
+
+      const ctx = canvas.getContext("2d");
+      ctx.scale(2, 2);
+      ctx.imageSmoothingEnabled = false;
+
+      // Grid background
+      ctx.fillStyle = COLORS.gridLine;
+      ctx.fillRect(0, 0, w, h);
+
+      // Compute enclosed tiles (simple: tiles reachable by horse but not reaching border)
+      // We already have this from the solver result — approximate by marking tiles
+      // in the solution's enclosed area. Since we don't get the reached bitboard from WASM,
+      // we skip enclosed highlighting for now.
+
+      for (let r = 0; r < numRows; r++) {
+        for (let c = 0; c < numCols; c++) {
+          const px = c * (TILE + GAP) + GAP;
+          const py = r * (TILE + GAP) + GAP;
+          const key = `${r},${c}`;
+          const ch = rows[r][c];
+          const isWall = wallSet.has(key);
+
+          drawTile(ctx, px, py, ch, isWall, false);
+        }
+      }
+    }
+
+    // --- UI wiring ---
+    const input = document.getElementById("input");
+    const solveBtn = document.getElementById("solve-btn");
+    const statusEl = document.getElementById("status");
+    const resultsEl = document.getElementById("results");
+
+    input.value = new Date().toISOString().slice(0, 10);
+
+    function setStatus(msg, isError = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isError ? "error" : "";
+    }
+
+    if (wasmError) {
+      setStatus(`WASM failed to load: ${wasmError.message}`, true);
+    }
+
+    function parseDateFromInput(raw) {
+      const m = raw.trim().match(/(\d{4}-\d{2}-\d{2})/);
+      return m ? m[1] : raw.trim();
+    }
+
+    async function solve() {
+      if (!wasmReady) {
+        setStatus(`WASM not loaded: ${wasmError?.message || "unknown error"}`, true);
+        return;
+      }
+      const dateStr = parseDateFromInput(input.value);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        setStatus("Invalid date format. Use YYYY-MM-DD or a puzzle URL.", true);
+        return;
+      }
+
+      solveBtn.disabled = true;
+      resultsEl.style.display = "none";
+      setStatus(`Fetching puzzle for ${dateStr}...`);
+
+      let puzzleJson;
+      try {
+        const resp = await fetch(`/api/daily/${dateStr}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+        puzzleJson = await resp.text();
+      } catch (err) {
+        setStatus(`Failed to fetch: ${err.message}`, true);
+        solveBtn.disabled = false;
+        return;
+      }
+
+      setStatus("Solving... (this may take a moment)");
+      await new Promise(r => setTimeout(r, 50));
+
+      let result;
+      try {
+        result = JSON.parse(solve_puzzle(puzzleJson, threaded));
+      } catch (err) {
+        setStatus(`Solver error: ${err.message}`, true);
+        solveBtn.disabled = false;
+        return;
+      }
+
+      const puzzle = JSON.parse(puzzleJson);
+      document.getElementById("res-name").textContent = result.name || dateStr;
+      document.getElementById("res-score").textContent = result.score;
+      document.getElementById("res-optimal").textContent = result.optimal_score ?? "?";
+      document.getElementById("res-budget").textContent = result.budget;
+      document.getElementById("res-walls").textContent =
+        `Walls: ${result.walls.map(([r, c]) => `(${r},${c})`).join(" ")}`;
+
+      renderCanvas(puzzle, result);
+
+      resultsEl.style.display = "block";
+      setStatus(result.elapsed_ms != null ? `Done in ${result.elapsed_ms}ms` : "Done!");
+      solveBtn.disabled = false;
+    }
+
+    solveBtn.addEventListener("click", solve);
+    input.addEventListener("keydown", e => { if (e.key === "Enter") solve(); });
+  </script>
+</body>
+</html>
