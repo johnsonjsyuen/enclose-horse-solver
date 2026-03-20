@@ -260,8 +260,8 @@ fn check_escape(reached: &[u32; MAX_ROWS], border_bitboard: &[u32], height: usiz
 /// Count total set bits across all reached rows.
 fn count_bits(reached: &[u32; MAX_ROWS], height: usize) -> i32 {
     let mut total: u32 = 0;
-    for row in 0..height {
-        total += reached[row].count_ones();
+    for bits in &reached[..height] {
+        total += bits.count_ones();
     }
     total as i32
 }

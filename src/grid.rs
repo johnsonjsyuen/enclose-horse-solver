@@ -192,7 +192,7 @@ impl Grid {
 
         // Pair portals in the order they appear in the map.
         assert!(
-            portal_positions.len() % 2 == 0,
+            portal_positions.len().is_multiple_of(2),
             "portals must come in pairs, found {}",
             portal_positions.len(),
         );
