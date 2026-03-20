@@ -29,11 +29,12 @@ pub fn solve_puzzle(json: &str, threaded: bool) -> Result<String, JsValue> {
     let result = solver::solve(&grid, puzzle.budget, num_restarts, threaded);
     let elapsed_ms = (now() - start) as u64;
 
-    let wall_positions: Vec<(usize, usize)> = result
+    let mut wall_positions: Vec<(usize, usize)> = result
         .walls
         .iter()
         .map(|&idx| grid.pos_to_rc(idx))
         .collect();
+    wall_positions.sort();
 
     let response = serde_json::json!({
         "score": result.score,

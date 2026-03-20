@@ -119,11 +119,12 @@ fn main() {
     let result = solver::solve(&grid, puzzle.budget, num_restarts, true);
 
     // Format wall positions as (row, col).
-    let wall_positions: Vec<(usize, usize)> = result
+    let mut wall_positions: Vec<(usize, usize)> = result
         .walls
         .iter()
         .map(|&idx| grid.pos_to_rc(idx))
         .collect();
+    wall_positions.sort();
 
     // Print results.
     println!(
