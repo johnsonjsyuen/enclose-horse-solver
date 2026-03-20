@@ -7,6 +7,7 @@ https://johnson-minipc.mermaid-snake.ts.net:8443 {
 
 	header Cross-Origin-Opener-Policy "same-origin"
 	header Cross-Origin-Embedder-Policy "require-corp"
+	header Content-Security-Policy "upgrade-insecure-requests"
 
 	reverse_proxy localhost:8080 {
 		header_down -Cross-Origin-Opener-Policy
