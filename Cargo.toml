@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "optimal-solver"]
+resolver = "2"
+
 [package]
 name = "enclose-horse-solver"
 version = "0.1.0"
