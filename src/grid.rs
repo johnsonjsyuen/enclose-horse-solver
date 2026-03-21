@@ -14,6 +14,8 @@ pub enum Tile {
     Bee,
     Lovebird,
     Portal,
+    Skull,
+    Gem,
 }
 
 impl Tile {
@@ -28,7 +30,9 @@ impl Tile {
             'A' => Tile::GoldenApple,
             'B' => Tile::Bee,
             'L' => Tile::Lovebird,
-            'P' => Tile::Portal,
+            'P' | '0'..='9' => Tile::Portal,
+            'S' => Tile::Skull,
+            'G' => Tile::Gem,
             other => {
                 eprintln!(
                     "warning: unknown tile character '{}', treating as Grass",
@@ -50,7 +54,13 @@ impl Tile {
     fn is_wall_placeable(self) -> bool {
         matches!(
             self,
-            Tile::Grass | Tile::Cherry | Tile::GoldenApple | Tile::Bee | Tile::Lovebird
+            Tile::Grass
+                | Tile::Cherry
+                | Tile::GoldenApple
+                | Tile::Bee
+                | Tile::Lovebird
+                | Tile::Skull
+                | Tile::Gem
         )
     }
 
@@ -61,6 +71,8 @@ impl Tile {
             Tile::GoldenApple => Some(10),
             Tile::Bee => Some(-5),
             Tile::Lovebird => Some(0),
+            Tile::Skull => Some(-5),
+            Tile::Gem => Some(10),
             _ => None,
         }
     }
@@ -98,7 +110,7 @@ pub struct Grid {
     /// Flattened index of the horse starting position.
     pub horse_pos: usize,
     /// Indices of tiles where walls can be placed (grass, cherry, apple, bee,
-    /// lovebird -- NOT water, horse, or portal).
+    /// lovebird, skull, gem -- NOT water, horse, or portal).
     pub grass_indices: Vec<usize>,
     /// One `u32` per row. Bit `j` is set if column `j` is passable (not water).
     pub passable_bitboard: Vec<u32>,
@@ -132,7 +144,7 @@ impl Grid {
 
         let mut tiles = Vec::with_capacity(width * height);
         let mut horse_pos: Option<usize> = None;
-        let mut portal_positions: Vec<usize> = Vec::new();
+        let mut portal_positions: Vec<(char, usize)> = Vec::new();
         let mut grass_indices: Vec<usize> = Vec::new();
         let mut bonus_scores: Vec<(usize, i32)> = Vec::new();
         let mut passable_bitboard: Vec<u32> = Vec::with_capacity(height);
@@ -161,7 +173,7 @@ impl Grid {
                 }
 
                 if tile == Tile::Portal {
-                    portal_positions.push(pos);
+                    portal_positions.push((ch, pos));
                 }
 
                 if tile.is_wall_placeable() {
@@ -190,16 +202,39 @@ impl Grid {
 
         let horse_pos = horse_pos.expect("map must contain exactly one horse tile (H)");
 
-        // Pair portals in the order they appear in the map.
+        // Pair portals: `P` portals pair sequentially in reading order,
+        // numbered portals (`0`-`9`) pair by matching character.
+        let mut p_portals: Vec<usize> = Vec::new();
+        let mut numbered: std::collections::BTreeMap<char, Vec<usize>> =
+            std::collections::BTreeMap::new();
+
+        for &(ch, pos) in &portal_positions {
+            if ch == 'P' {
+                p_portals.push(pos);
+            } else {
+                numbered.entry(ch).or_default().push(pos);
+            }
+        }
+
         assert!(
-            portal_positions.len().is_multiple_of(2),
-            "portals must come in pairs, found {}",
-            portal_positions.len(),
+            p_portals.len().is_multiple_of(2),
+            "P portals must come in pairs, found {}",
+            p_portals.len(),
         );
-        let portal_pairs: Vec<(usize, usize)> = portal_positions
+        let mut portal_pairs: Vec<(usize, usize)> = p_portals
             .chunks_exact(2)
             .map(|pair| (pair[0], pair[1]))
             .collect();
+
+        for (ch, positions) in &numbered {
+            assert!(
+                positions.len() == 2,
+                "numbered portal '{}' must have exactly 2 occurrences, found {}",
+                ch,
+                positions.len(),
+            );
+            portal_pairs.push((positions[0], positions[1]));
+        }
 
         Grid {
             width,
@@ -347,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "portals must come in pairs")]
+    #[should_panic(expected = "P portals must come in pairs")]
     fn panics_on_odd_portals() {
         let data = puzzle("P..\n.H.\n...", 0);
         Grid::from_puzzle(&data);
@@ -360,5 +395,54 @@ mod tests {
 
         assert_eq!(grid.tiles[0], Tile::Grass);
         assert!(grid.grass_indices.contains(&0));
+    }
+
+    #[test]
+    fn skull_tile_properties() {
+        let data = puzzle("S.H", 0);
+        let grid = Grid::from_puzzle(&data);
+
+        assert_eq!(grid.tiles[0], Tile::Skull);
+        assert!(grid.grass_indices.contains(&0)); // wall-placeable
+        assert_eq!(grid.bonus_scores, vec![(0, -5)]);
+    }
+
+    #[test]
+    fn gem_tile_properties() {
+        let data = puzzle("G.H", 0);
+        let grid = Grid::from_puzzle(&data);
+
+        assert_eq!(grid.tiles[0], Tile::Gem);
+        assert!(grid.grass_indices.contains(&0)); // wall-placeable
+        assert_eq!(grid.bonus_scores, vec![(0, 10)]);
+    }
+
+    #[test]
+    fn numbered_portal_pairing() {
+        // Two `0` portals and two `1` portals, interleaved in reading order
+        let data = puzzle("0.1.\n.H..\n1..0", 0);
+        let grid = Grid::from_puzzle(&data);
+
+        // 0 portals at pos 0 (r0c0) and pos 11 (r2c3)
+        // 1 portals at pos 2 (r0c2) and pos 8 (r2c0)
+        // BTreeMap iterates in key order: '0' then '1'
+        assert_eq!(grid.portal_pairs, vec![(0, 11), (2, 8)]);
+    }
+
+    #[test]
+    fn mixed_p_and_numbered_portals() {
+        let data = puzzle("P0.0P\n..H..", 0);
+        let grid = Grid::from_puzzle(&data);
+
+        // P portals at pos 0 and 4, paired sequentially
+        // 0 portals at pos 1 and 3, paired by character
+        assert_eq!(grid.portal_pairs, vec![(0, 4), (1, 3)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "numbered portal '0' must have exactly 2 occurrences")]
+    fn panics_on_unpaired_numbered_portal() {
+        let data = puzzle("0..\n.H.\n...", 0);
+        Grid::from_puzzle(&data);
     }
 }

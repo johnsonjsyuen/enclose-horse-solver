@@ -123,6 +123,8 @@
       <div class="legend-item"><div class="legend-swatch" style="background:#e74c8c"></div>Cherry</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#f1c40f"></div>Apple</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#e67e22"></div>Bee</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#6b6b6b"></div>Skull</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#1abc9c"></div>Gem</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#9b59b6"></div>Portal</div>
     </div>
   </div>
@@ -188,6 +190,12 @@
       beeStripe: "#333",
       portal:    "#9b59b6",
       portalGlow:"#c39bd3",
+      skull:     "#6b6b6b",
+      skullDark: "#4a4a4a",
+      skullEye:  "#1a1a1a",
+      gem:       "#1abc9c",
+      gemShine:  "#a8f0e0",
+      gemDark:   "#0e8c72",
       gridLine:  "#1a3a2a",
       enclosed:  "rgba(76, 175, 80, 0.15)",
     };
@@ -216,7 +224,13 @@
       } else if (ch === "B") {
         drawGrass(ctx, x, y, s);
         drawBee(ctx, x, y, s);
-      } else if (ch === "P") {
+      } else if (ch === "S") {
+        drawGrass(ctx, x, y, s);
+        drawSkull(ctx, x, y, s);
+      } else if (ch === "G") {
+        drawGrass(ctx, x, y, s);
+        drawGem(ctx, x, y, s);
+      } else if (ch === "P" || (ch >= "0" && ch <= "9")) {
         drawGrass(ctx, x, y, s);
         drawPortal(ctx, x, y, s);
       } else if (ch === "L") {
@@ -395,6 +409,54 @@
       ctx.fillRect(cx - 5*u, cy - 3*u, 2*u, 2*u);
       ctx.fillRect(cx - 3*u, cy - 3*u, 2*u, 2*u);
       ctx.fillRect(cx - 4*u, cy - 1*u, 2*u, u);
+    }
+
+    function drawSkull(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      const u = s / 14;
+      // Cranium
+      ctx.fillStyle = COLORS.skull;
+      ctx.fillRect(cx - 3*u, cy - 4*u, 6*u, 5*u);
+      // Rounded top
+      ctx.fillRect(cx - 2*u, cy - 5*u, 4*u, u);
+      // Jaw
+      ctx.fillStyle = COLORS.skullDark;
+      ctx.fillRect(cx - 2*u, cy + u, 4*u, 2*u);
+      // Teeth
+      ctx.fillStyle = COLORS.skull;
+      ctx.fillRect(cx - 2*u, cy + u, u, u);
+      ctx.fillRect(cx + u, cy + u, u, u);
+      // Eye sockets
+      ctx.fillStyle = COLORS.skullEye;
+      ctx.fillRect(cx - 2*u, cy - 3*u, 2*u, 2*u);
+      ctx.fillRect(cx + u, cy - 3*u, 2*u, 2*u);
+      // Nose
+      ctx.fillRect(cx, cy - u, u, u);
+    }
+
+    function drawGem(ctx, x, y, s) {
+      const cx = x + s / 2, cy = y + s / 2;
+      const u = s / 14;
+      // Diamond shape
+      ctx.fillStyle = COLORS.gem;
+      // Top triangle
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 4*u);
+      ctx.lineTo(cx + 4*u, cy);
+      ctx.lineTo(cx - 4*u, cy);
+      ctx.closePath();
+      ctx.fill();
+      // Bottom triangle
+      ctx.fillStyle = COLORS.gemDark;
+      ctx.beginPath();
+      ctx.moveTo(cx - 4*u, cy);
+      ctx.lineTo(cx + 4*u, cy);
+      ctx.lineTo(cx, cy + 4*u);
+      ctx.closePath();
+      ctx.fill();
+      // Shine highlight
+      ctx.fillStyle = COLORS.gemShine;
+      ctx.fillRect(cx - u, cy - 2*u, 2*u, u);
     }
 
     function renderCanvas(puzzleData, solution) {
