@@ -49,19 +49,10 @@ impl Tile {
     }
 
     /// Whether a wall can be placed on this tile.
-    /// Walls go on grass and bonus tiles, but NOT on water, the horse start,
-    /// or portals.
+    /// Walls can only go on plain grass — NOT on water, horse, portals,
+    /// or any special tile (cherry, apple, bee, skull, gem, lovebird).
     fn is_wall_placeable(self) -> bool {
-        matches!(
-            self,
-            Tile::Grass
-                | Tile::Cherry
-                | Tile::GoldenApple
-                | Tile::Bee
-                | Tile::Lovebird
-                | Tile::Skull
-                | Tile::Gem
-        )
+        self == Tile::Grass
     }
 
     /// The bonus score adjustment when this tile is enclosed, if any.
@@ -403,7 +394,7 @@ mod tests {
         let grid = Grid::from_puzzle(&data);
 
         assert_eq!(grid.tiles[0], Tile::Skull);
-        assert!(grid.grass_indices.contains(&0)); // wall-placeable
+        assert!(!grid.grass_indices.contains(&0)); // not wall-placeable
         assert_eq!(grid.bonus_scores, vec![(0, -5)]);
     }
 
@@ -413,7 +404,7 @@ mod tests {
         let grid = Grid::from_puzzle(&data);
 
         assert_eq!(grid.tiles[0], Tile::Gem);
-        assert!(grid.grass_indices.contains(&0)); // wall-placeable
+        assert!(!grid.grass_indices.contains(&0)); // not wall-placeable
         assert_eq!(grid.bonus_scores, vec![(0, 10)]);
     }
 
