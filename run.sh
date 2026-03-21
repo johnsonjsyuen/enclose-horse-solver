@@ -18,12 +18,13 @@ fi
 echo "Fetching Tailscale TLS cert..."
 tailscale cert --cert-file ts.crt --key-file ts.key "$TS_DOMAIN"
 
-# Build the Rust server if needed
-SERVER="./target/release/serve"
-if [ ! -x "$SERVER" ]; then
-  echo "Building server..."
-  cargo build --release --bin serve --features native
-fi
+# Build WASM
+echo "Building WASM..."
+./build-wasm.sh
+
+# Build and start server
+echo "Building server..."
+cargo build --release --bin serve --features native
 
 cleanup() {
   echo "Shutting down..."
@@ -34,7 +35,7 @@ trap cleanup EXIT
 
 # Start backend server
 echo "Starting backend on :8080..."
-"$SERVER" &
+./target/release/serve &
 SERVER_PID=$!
 
 # Start Caddy (HTTPS on :8443)
