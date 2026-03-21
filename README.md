@@ -60,6 +60,14 @@ Mobile browsers require HTTPS for `crossOriginIsolated` (needed for WASM threads
 
 If you're on Tailscale, it uses `tailscale cert` for a real Let's Encrypt certificate. The solver gracefully falls back to single-threaded mode if threading isn't available.
 
+## Optimal solver (MIP)
+
+The `optimal-solver/` subfolder contains a separate binary that finds **provably optimal** solutions using Mixed-Integer Programming (HiGHS). See [optimal-solver/README.md](optimal-solver/README.md) for details.
+
+```bash
+cargo run --release -p optimal-solver
+```
+
 ## Tests
 
 ```bash

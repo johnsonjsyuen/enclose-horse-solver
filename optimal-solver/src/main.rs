@@ -398,20 +398,40 @@ fn main() {
         puzzle.optimal_score.map_or("unknown".to_string(), |s| s.to_string())
     );
     println!();
-    println!("Solution found: score = {} (MIP optimal)", verified_score);
+    println!("Score: {} (area={}, bonus={})", verified_score, ff_result.area, ff_result.bonus);
 
     let wall_strs: Vec<String> = wall_positions.iter()
         .map(|(r, c)| format!("({},{})", r, c)).collect();
-    println!("Walls at: {}", wall_strs.join(" "));
+    println!("Walls ({}): {}", walls.len(), wall_strs.join(" "));
     println!();
 
-    println!("Map:");
+    // Build map: show walls, enclosed area, and original tiles
     let wall_set: HashSet<usize> = walls.iter().copied().collect();
     let rows: Vec<&str> = puzzle.map.lines().collect();
+
+    // Column header
+    print!("   ");
+    for c in 0..grid.width {
+        print!("{}", c % 10);
+    }
+    println!();
+
     for (r, row_str) in rows.iter().enumerate() {
+        print!("{:2} ", r);
         let line: String = row_str.chars().enumerate()
             .map(|(c, ch)| {
-                if wall_set.contains(&(r * grid.width + c)) { 'W' } else { ch }
+                let pos = r * grid.width + c;
+                if wall_set.contains(&pos) {
+                    '#'
+                } else if ff_result.reached[r] & (1u32 << c) != 0 {
+                    // Reachable by horse — show original tile
+                    ch
+                } else if ch == '~' {
+                    '~'
+                } else {
+                    // Not reachable and not water — enclosed area
+                    '░'
+                }
             }).collect();
         println!("{}", line);
     }
