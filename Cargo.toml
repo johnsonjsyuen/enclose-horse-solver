@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "optimal-solver"]
+members = [".", "optimal-solver", "gpu-solver"]
 resolver = "2"
 
 [package]

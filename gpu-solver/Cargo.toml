@@ -1,0 +1,19 @@
+[package]
+name = "gpu-solver"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gpu-solver"
+path = "src/main.rs"
+
+[dependencies]
+enclose-horse-solver = { path = "..", default-features = false, features = ["native"] }
+wgpu = "25"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+chrono = "0.4"
+serde_json = "1"
+rand = "0.9"
+env_logger = "0.11"
