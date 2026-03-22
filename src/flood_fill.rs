@@ -23,8 +23,20 @@ pub struct FloodFillResult {
 
 /// Pre-allocated buffers for flood fill, designed to be reused across millions
 /// of SA evaluations without heap allocation on the hot path.
+///
+/// **Why reuse matters:** The SA solver calls `evaluate()` millions of times
+/// (once per candidate move). If we allocated fresh `[u32; MAX_ROWS]` arrays
+/// each time, the allocator overhead would dominate runtime. By storing the
+/// buffers in this struct and resetting them at the start of each `evaluate()`,
+/// we pay for allocation only once per SA restart.
 pub struct FloodFillState {
+    /// Bitboard of tiles the horse can walk through (1 = passable, 0 = blocked).
+    /// Copied from the grid's precomputed bitboard, then modified per-evaluation
+    /// to "punch out" temporary wall placements. We copy instead of mutating the
+    /// grid because walls change every SA iteration -- the grid's base passability
+    /// is a constant that we need to restore from each time.
     passable: [u32; MAX_ROWS],
+    /// Bitboard of tiles the horse has reached so far during flood fill.
     reached: [u32; MAX_ROWS],
     height: usize,
     width: usize,
@@ -51,27 +63,45 @@ impl FloodFillState {
     ///
     /// This is the hot-path function called millions of times by SA.
     /// It reuses internal buffers to avoid allocation.
+    ///
+    /// ## Bitboard representation
+    ///
+    /// The grid is stored as one `u32` per row, where bit `j` being set means
+    /// column `j` is passable (or reached). This representation is powerful
+    /// because cardinal-direction movement maps to cheap bitwise ops:
+    /// - **Move right on the grid** = shift the bits left (`<< 1`), since
+    ///   setting bit `j+1` means "the cell one column to the right".
+    /// - **Move left on the grid** = shift the bits right (`>> 1`).
+    /// - **Move up/down** = read the adjacent row's u32.
+    /// - **Combine neighbors** = bitwise OR all four directions together.
+    /// - **Enforce walls** = bitwise AND with the passable mask.
+    ///
+    /// A single OR-shift-AND sequence processes an entire row (up to 32 columns)
+    /// in one CPU instruction, versus looping over each cell individually.
     pub fn evaluate(&mut self, grid: &Grid, walls: &[usize]) -> FloodFillResult {
         let height = self.height;
         let width = self.width;
 
-        // Reset passable from grid's precomputed bitboard.
+        // Reset passable from the grid's precomputed base bitboard.
+        // We copy rather than mutate because we need the original back next call.
         self.passable[..height].copy_from_slice(&grid.passable_bitboard);
         self.passable[height..].fill(0);
 
-        // Clear each wall bit in the passable bitboard.
+        // "Punch out" each wall from the passable bitboard by clearing its bit.
+        // This is how temporary wall placements take effect without modifying the grid.
         for &wall_pos in walls {
             let row = wall_pos / width;
             let col = wall_pos % width;
-            self.passable[row] &= !(1u32 << col);
+            self.passable[row] &= !(1u32 << col); // clear bit col in that row
         }
 
-        // Initialize reached: only the horse bit is set.
+        // Seed the flood fill: only the horse's tile is initially reached.
         self.reached = [0u32; MAX_ROWS];
         let (horse_row, horse_col) = grid.pos_to_rc(grid.horse_pos);
         self.reached[horse_row] = 1u32 << horse_col;
 
-        // Collect portal info: (row_a, col_a, row_b, col_b) for passable portal pairs.
+        // Pre-filter portal pairs to only those where both endpoints are still
+        // passable (a wall on either endpoint disables the portal).
         let portal_pairs: Vec<(usize, usize, usize, usize)> = grid
             .portal_pairs
             .iter()
@@ -88,11 +118,18 @@ impl FloodFillState {
             })
             .collect();
 
-        // Flood fill loop: iterate until convergence.
+        // --- Convergence loop ---
+        // Each call to flood_fill_step propagates the "reached" frontier by
+        // exactly one cell in each cardinal direction. To fill an enclosed
+        // region of diameter D, we need at least D iterations. We loop until
+        // neither the flood fill nor portal propagation changes anything --
+        // that's our fixed-point / convergence condition.
         loop {
             let changed = flood_fill_step(&mut self.reached, &self.passable, height);
 
-            // Portal propagation: if one end is reached, seed the other.
+            // Portal propagation: if the flood reached one end of a portal
+            // pair, "teleport" by seeding the other end. This is bidirectional
+            // -- reaching either endpoint activates the link.
             let portal_changed = propagate_portals(&mut self.reached, &portal_pairs);
 
             if !changed && !portal_changed {
@@ -100,7 +137,9 @@ impl FloodFillState {
             }
         }
 
-        // Escape check: if any reached tile is on the border, the horse escaped.
+        // Escape check: if ANY reached tile overlaps with the border bitboard,
+        // the horse can walk to the edge and escape. The bitwise AND detects
+        // this in O(rows) rather than checking each border cell individually.
         let escaped = check_escape(&self.reached, &grid.border_bitboard, height);
 
         if escaped {
@@ -113,7 +152,8 @@ impl FloodFillState {
             };
         }
 
-        // Count enclosed area via popcount.
+        // Count enclosed area using popcount (count_ones). Each set bit in
+        // the reached bitboard is one tile the horse can access.
         let area = count_bits(&self.reached, height);
 
         // Sum bonus values for reached bonus tiles.
@@ -133,8 +173,28 @@ impl FloodFillState {
 
 /// One step of flood fill expansion using SIMD for batches of 8 rows.
 ///
-/// For each row, the reached set is expanded left, right, up, and down,
-/// then masked by passable. Returns true if any row changed.
+/// ## How it works
+///
+/// For each row, the "reached" set is expanded in all 4 cardinal directions:
+///   new_reached = (reached | shift_left | shift_right | row_above | row_below) & passable
+///
+/// The left/right expansion uses bit shifts within each u32 (one u32 = one row).
+/// The up/down expansion reads from adjacent rows.
+///
+/// ## SIMD acceleration (Simd<u32, 8>)
+///
+/// `Simd<u32, 8>` packs 8 row-bitboards into a single 256-bit SIMD register,
+/// processing 8 rows with one instruction for the horizontal shifts and the
+/// OR/AND masking. This gives roughly 4-8x throughput over scalar code for
+/// those operations.
+///
+/// The tricky part is vertical neighbors (up/down): SIMD lanes are independent,
+/// but row `i` needs data from row `i-1` (above) and row `i+1` (below). We
+/// handle this by manually constructing offset arrays where lane `k` of the
+/// "up" vector contains `reached[base+k-1]` and lane `k` of the "down" vector
+/// contains `reached[base+k+1]`. This is a data shuffle, not a SIMD shift.
+///
+/// Returns true if any row changed (caller uses this for convergence detection).
 fn flood_fill_step(
     reached: &mut [u32; MAX_ROWS],
     passable: &[u32; MAX_ROWS],
@@ -147,14 +207,20 @@ fn flood_fill_step(
     for c in 0..chunks {
         let base = c * 8;
 
+        // Load 8 consecutive rows into SIMD registers.
         let r = Simd::<u32, 8>::from_slice(&reached[base..base + 8]);
         let p = Simd::<u32, 8>::from_slice(&passable[base..base + 8]);
 
-        // Expand left and right within each row (bit shifts within each lane).
+        // Horizontal expansion: shift each row-bitboard left and right by 1 bit.
+        // In grid terms: shift_left(<<1) = "can reach one column to the right",
+        // shift_right(>>1) = "can reach one column to the left".
+        // Splat broadcasts the shift amount to all 8 lanes.
         let expanded = r | (r << Simd::splat(1)) | (r >> Simd::splat(1));
 
-        // Build up-neighbor vector: for each lane i, the row above is reached[base+i-1].
-        // Lane 0 needs reached[base-1] (from previous chunk, or 0 if at top edge).
+        // Build up-neighbor vector: lane k needs reached[base+k-1].
+        // Lane 0 is special: if base==0 there's no row above, so use 0.
+        // This manual construction is necessary because SIMD has no
+        // "shift lanes down by 1" instruction on all platforms.
         let up = Simd::<u32, 8>::from_array([
             if base > 0 { reached[base - 1] } else { 0 },
             reached[base],
@@ -166,8 +232,8 @@ fn flood_fill_step(
             reached[base + 6],
         ]);
 
-        // Build down-neighbor vector: for each lane i, the row below is reached[base+i+1].
-        // Lane 7 needs reached[base+8] (from next chunk, or 0 if at bottom edge).
+        // Build down-neighbor vector: lane k needs reached[base+k+1].
+        // Lane 7 is special: may be past the last row.
         let down = Simd::<u32, 8>::from_array([
             reached[base + 1],
             reached[base + 2],
@@ -183,6 +249,7 @@ fn flood_fill_step(
             },
         ]);
 
+        // Combine all four directions, then mask by passable to block walls.
         let new_r = (expanded | up | down) & p;
 
         if new_r != r {
@@ -191,15 +258,16 @@ fn flood_fill_step(
         }
     }
 
-    // Handle remainder rows with scalar operations.
+    // Handle remainder rows (height not divisible by 8) with scalar operations.
+    // Same logic as the SIMD path but one row at a time.
     for row in remainder_start..height {
         let r = reached[row];
         let mut expanded = r | (r << 1) | (r >> 1);
         if row > 0 {
-            expanded |= reached[row - 1];
+            expanded |= reached[row - 1]; // up
         }
         if row + 1 < height {
-            expanded |= reached[row + 1];
+            expanded |= reached[row + 1]; // down
         }
         let new_val = expanded & passable[row];
         if new_val != reached[row] {
@@ -213,6 +281,10 @@ fn flood_fill_step(
 
 /// Propagate portal teleportation: if one portal in a pair is reached,
 /// mark the other as reached too. Returns true if any change occurred.
+///
+/// Portals are bidirectional: reaching either endpoint activates the link.
+/// This function is called after each flood fill step because a portal can
+/// seed a new region that then needs further flood fill expansion.
 fn propagate_portals(
     reached: &mut [u32; MAX_ROWS],
     portals: &[(usize, usize, usize, usize)],
@@ -234,7 +306,10 @@ fn propagate_portals(
 }
 
 /// Check whether any reached tile sits on the border (horse escaped).
-/// Uses SIMD to process 8 rows at a time.
+///
+/// The border_bitboard has bits set for all border tiles. A single bitwise
+/// AND per row detects overlap. SIMD processes 8 rows at once, and a
+/// non-zero result means at least one reached tile is on the border.
 fn check_escape(reached: &[u32; MAX_ROWS], border_bitboard: &[u32], height: usize) -> bool {
     let chunks = height / 8;
     let remainder_start = chunks * 8;
@@ -257,7 +332,8 @@ fn check_escape(reached: &[u32; MAX_ROWS], border_bitboard: &[u32], height: usiz
     false
 }
 
-/// Count total set bits across all reached rows.
+/// Count total set bits across all reached rows using hardware popcount.
+/// Each set bit represents one tile the horse can reach.
 fn count_bits(reached: &[u32; MAX_ROWS], height: usize) -> i32 {
     let mut total: u32 = 0;
     for bits in &reached[..height] {
@@ -267,7 +343,8 @@ fn count_bits(reached: &[u32; MAX_ROWS], height: usize) -> i32 {
 }
 
 /// Compute the bonus score for all reached bonus tiles using the grid's
-/// pre-computed `bonus_scores` list. This avoids scanning every cell.
+/// pre-computed `bonus_scores` list. This avoids scanning every cell --
+/// we only iterate over tiles that have a bonus value.
 fn compute_bonus(grid: &Grid, reached: &[u32; MAX_ROWS], width: usize) -> i32 {
     let mut bonus = 0i32;
     for &(pos, adjustment) in &grid.bonus_scores {
