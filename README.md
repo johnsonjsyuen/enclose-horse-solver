@@ -1,24 +1,27 @@
 # enclose-horse-solver
 
-A high-performance solver for the daily [enclose.horse](https://enclose.horse) puzzle. It finds optimal (or near-optimal) wall placements using simulated annealing with SIMD-accelerated flood fill.
+A collection of solvers for the daily [enclose.horse](https://enclose.horse) puzzle, ranging from a fast heuristic to a provably optimal MIP formulation, with both CPU and GPU implementations.
 
-Runs both as a **native CLI** and as a **browser-based WASM app** with multi-threading support.
+## The puzzle
 
-## How it works
+[enclose.horse](https://enclose.horse) is a daily puzzle where you place a limited number of walls on a grid to enclose a horse and maximize your score. The grid contains water, portals, and bonus tiles (cherries, golden apples, gems, bees, skulls) that affect scoring.
 
-[enclose.horse](https://enclose.horse) is a daily puzzle where you place walls on a grid to enclose a horse and maximize your score. The solver uses:
+## Solvers
 
-- **Simulated annealing** with multiple parallel restarts to explore the solution space
-- **SIMD128 flood fill** (portable\_simd) for fast enclosure evaluation — bitboard-based, processing 128 bits at a time
-- **Rayon** for parallel SA restarts (native and WASM via Web Workers)
+| Solver | Approach | Speed | Optimality | Location |
+|--------|----------|-------|------------|----------|
+| **CPU SA** | Simulated annealing + SIMD flood fill | ~1-3s | Near-optimal (8 restarts) | `src/` |
+| **WASM** | Same SA, runs in-browser | ~1-5s | Near-optimal (4 restarts) | `src/lib.rs` + `web/` |
+| **GPU SA** | SA on wgpu compute shaders | ~1-15s | Near-optimal (1024 restarts) | `gpu-solver/` |
+| **Optimal** | Mixed-Integer Programming (HiGHS) | ~1-60s | Provably optimal | `optimal-solver/` |
 
-The WASM frontend fetches the daily puzzle, runs the solver entirely in-browser, and renders the solution on a canvas with pixel-art tile graphics.
+### CPU solver (simulated annealing)
 
-## Quick start
+The main solver uses simulated annealing with multiple parallel restarts and SIMD-accelerated flood fill:
 
-### Native CLI
-
-Requires Rust nightly (pinned via `rust-toolchain.toml`).
+- **Portable SIMD** (`std::simd`) processes 8 grid rows at once for fast enclosure evaluation
+- **Bitboard representation** — one `u32` per row, shifts and masks for flood fill
+- **Rayon** for parallel SA restarts
 
 ```bash
 # Solve today's puzzle (8 parallel SA restarts)
@@ -31,45 +34,68 @@ cargo run --release --bin enclose-horse-solver -- 2026-03-21
 cargo run --release --bin enclose-horse-solver -- --bench
 ```
 
-### Web (WASM)
+### GPU solver (wgpu + WGSL)
 
-Requires [wasm-pack](https://rustwasm.github.io/wasm-pack/installer/) and the `rust-src` component:
-
-```bash
-rustup component add rust-src --toolchain nightly
-./build-wasm.sh
-```
-
-Then serve locally:
+Runs 1024 independent SA restarts on the GPU using wgpu compute shaders. Each GPU thread executes a full SA loop with its own RNG state and bitboard flood fill. The massive parallelism compensates for shorter individual runs, often finding better solutions than the CPU solver.
 
 ```bash
-cargo run --release --bin serve
-# Opens on http://localhost:8080
+# Solve today's puzzle (1024 GPU threads)
+cargo run --release -p gpu-solver
+
+# Custom thread count
+cargo run --release -p gpu-solver -- --threads=2048
 ```
 
-The built-in server proxies `/api/*` to `https://enclose.horse` (avoiding CORS) and sets the COOP/COEP headers required for SharedArrayBuffer.
+Results are verified against the CPU flood fill implementation.
 
-### HTTPS (for mobile browsers)
+### Optimal solver (MIP)
 
-Mobile browsers require HTTPS for `crossOriginIsolated` (needed for WASM threads). The included `run.sh` sets up Caddy as a reverse proxy with TLS:
-
-```bash
-./run.sh
-# Serves on https://<hostname>:8443
-```
-
-If you're on Tailscale, it uses `tailscale cert` for a real Let's Encrypt certificate. The solver gracefully falls back to single-threaded mode if threading isn't available.
-
-## Optimal solver (MIP)
-
-The `optimal-solver/` subfolder contains a separate binary that finds **provably optimal** solutions using Mixed-Integer Programming (HiGHS). See [optimal-solver/README.md](optimal-solver/README.md) for details.
+Finds **provably optimal** solutions by formulating the puzzle as a Mixed-Integer Program with single-commodity flow conservation constraints. Uses [HiGHS](https://highs.dev/). See [optimal-solver/README.md](optimal-solver/README.md) for the full MIP formulation.
 
 ```bash
 cargo run --release -p optimal-solver
 ```
 
-## Tests
+### Web (WASM)
+
+The solver also runs entirely in-browser via WASM with Web Workers for multi-threading.
 
 ```bash
-cargo test
+rustup component add rust-src --toolchain nightly
+./build-wasm.sh
+cargo run --release --bin serve   # http://localhost:8080
+```
+
+The built-in server proxies `/api/*` to `https://enclose.horse` (avoiding CORS) and sets COOP/COEP headers for SharedArrayBuffer. For mobile (HTTPS required), use `./run.sh` which sets up Caddy with TLS.
+
+## Building
+
+Requires Rust nightly (pinned via `rust-toolchain.toml`). Uses [mold](https://github.com/rui314/mold) as the linker for faster native builds.
+
+```bash
+cargo build --release                        # all solvers
+cargo run --release --bin enclose-horse-solver  # CPU
+cargo run --release -p gpu-solver              # GPU (needs Vulkan/Metal/DX12)
+cargo run --release -p optimal-solver          # MIP (needs HiGHS)
+cargo test                                     # 37 tests
+```
+
+## Project structure
+
+```
+├── src/
+│   ├── main.rs          # CPU CLI entry point
+│   ├── lib.rs           # WASM bindings
+│   ├── grid.rs          # Tile types, grid parsing, bitboards
+│   ├── flood_fill.rs    # SIMD flood fill + scoring
+│   ├── solver.rs        # Simulated annealing
+│   └── serve.rs         # Dev HTTP server
+├── gpu-solver/
+│   └── src/
+│       ├── main.rs      # wgpu host code
+│       └── shader.wgsl  # WGSL compute shader (SA + flood fill)
+├── optimal-solver/
+│   └── src/main.rs      # HiGHS MIP formulation
+└── web/
+    └── index.html       # Browser frontend
 ```
