@@ -369,7 +369,9 @@ fn main() {
         grid.width, grid.height, horse_col, horse_row, puzzle.budget, grid.grass_indices.len()
     );
 
+    let solve_start = std::time::Instant::now();
     let (mip_score, walls) = solve_mip(&grid, puzzle.budget);
+    let solve_elapsed = solve_start.elapsed();
 
     // Verify with flood fill.
     let mut ff = FloodFillState::new(&grid);
@@ -398,7 +400,7 @@ fn main() {
         puzzle.optimal_score.map_or("unknown".to_string(), |s| s.to_string())
     );
     println!();
-    println!("Score: {} (area={}, bonus={})", verified_score, ff_result.area, ff_result.bonus);
+    println!("Score: {} (area={}, bonus={}, solved in {:.2?})", verified_score, ff_result.area, ff_result.bonus, solve_elapsed);
 
     let wall_strs: Vec<String> = wall_positions.iter()
         .map(|(r, c)| format!("({},{})", r, c)).collect();

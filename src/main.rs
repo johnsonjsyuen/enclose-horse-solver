@@ -116,7 +116,9 @@ fn main() {
     // Run the solver.
     let num_restarts = 8;
     eprintln!("Running solver with {} parallel restarts...", num_restarts);
+    let solve_start = std::time::Instant::now();
     let result = solver::solve(&grid, puzzle.budget, num_restarts, true);
+    let solve_elapsed = solve_start.elapsed();
 
     // Format wall positions as (row, col).
     let mut wall_positions: Vec<(usize, usize)> = result
@@ -141,7 +143,7 @@ fn main() {
             .map_or("unknown".to_string(), |s| s.to_string())
     );
     println!();
-    println!("Solution found: score = {}", result.score);
+    println!("Solution found: score = {} (solved in {:.2?})", result.score, solve_elapsed);
 
     let wall_strs: Vec<String> = wall_positions
         .iter()
